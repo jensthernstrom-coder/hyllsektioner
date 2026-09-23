@@ -90,15 +90,36 @@ const GET_PRODUCT_SHELVES = `
 `;
 
 const GET_EXISTING_SHELVES = `
-  query DlGetExistingShelves($after: String) {
-    metafieldDefinition(
+  query DlGetExistingShelves(
+    $sectionsAfter: String
+    $readableAfter: String
+  ) {
+    sectionsDefinition: metafieldDefinition(
       identifier: {
         ownerType: PRODUCT
         namespace: "custom"
         key: "butikshylla_sektioner"
       }
     ) {
-      metafields(first: 250, after: $after) {
+      metafields(first: 250, after: $sectionsAfter) {
+        nodes {
+          value
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+
+    readableDefinition: metafieldDefinition(
+      identifier: {
+        ownerType: PRODUCT
+        namespace: "custom"
+        key: "butikshylla"
+      }
+    ) {
+      metafields(first: 250, after: $readableAfter) {
         nodes {
           value
         }
@@ -212,24 +233,56 @@ function getErrors(payload, operationName) {
 
 async function queryExistingShelves() {
   const collected = [];
-  let after = null;
-  let hasNextPage = true;
+
+  let sectionsAfter = null;
+  let readableAfter = null;
+  let sectionsHasNext = true;
+  let readableHasNext = true;
   let pages = 0;
 
-  while (hasNextPage && pages < 25) {
+  while ((sectionsHasNext || readableHasNext) && pages < 25) {
     const result = await shopify.query(GET_EXISTING_SHELVES, {
-      variables: {after},
+      variables: {
+        sectionsAfter: sectionsHasNext ? sectionsAfter : null,
+        readableAfter: readableHasNext ? readableAfter : null,
+      },
     });
 
-    const connection = result?.data?.metafieldDefinition?.metafields;
-    if (!connection) break;
+    const sectionsConnection =
+      result?.data?.sectionsDefinition?.metafields;
+    const readableConnection =
+      result?.data?.readableDefinition?.metafields;
 
-    for (const metafield of connection.nodes ?? []) {
-      collected.push(...parseSectionList(metafield.value));
+    if (sectionsHasNext && sectionsConnection) {
+      for (const metafield of sectionsConnection.nodes ?? []) {
+        collected.push(...parseSectionList(metafield.value));
+      }
+
+      sectionsHasNext = Boolean(
+        sectionsConnection.pageInfo?.hasNextPage,
+      );
+      sectionsAfter =
+        sectionsConnection.pageInfo?.endCursor ?? null;
+    } else {
+      sectionsHasNext = false;
     }
 
-    hasNextPage = Boolean(connection.pageInfo?.hasNextPage);
-    after = connection.pageInfo?.endCursor ?? null;
+    if (readableHasNext && readableConnection) {
+      for (const metafield of readableConnection.nodes ?? []) {
+        collected.push(
+          ...parseLegacyReadableShelf(metafield.value),
+        );
+      }
+
+      readableHasNext = Boolean(
+        readableConnection.pageInfo?.hasNextPage,
+      );
+      readableAfter =
+        readableConnection.pageInfo?.endCursor ?? null;
+    } else {
+      readableHasNext = false;
+    }
+
     pages += 1;
   }
 
