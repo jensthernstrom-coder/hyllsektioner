@@ -1,6 +1,7 @@
 import '@shopify/ui-extensions/preact';
 import {render} from "preact";
 import {useEffect, useMemo, useState} from "preact/hooks";
+import {SHELF_SECTIONS} from "./shelves.js";
 
 /* ============================================================
    START: DL BUTIKSHYLLA – KONFIGURATION
@@ -84,49 +85,6 @@ const GET_PRODUCT_SHELVES = `
         value
         type
         updatedAt
-      }
-    }
-  }
-`;
-
-const GET_EXISTING_SHELVES = `
-  query DlGetExistingShelves(
-    $sectionsAfter: String
-    $readableAfter: String
-  ) {
-    sectionsDefinition: metafieldDefinition(
-      identifier: {
-        ownerType: PRODUCT
-        namespace: "custom"
-        key: "butikshylla_sektioner"
-      }
-    ) {
-      metafields(first: 250, after: $sectionsAfter) {
-        nodes {
-          value
-        }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-      }
-    }
-
-    readableDefinition: metafieldDefinition(
-      identifier: {
-        ownerType: PRODUCT
-        namespace: "custom"
-        key: "butikshylla"
-      }
-    ) {
-      metafields(first: 250, after: $readableAfter) {
-        nodes {
-          value
-        }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
       }
     }
   }
@@ -235,66 +193,6 @@ function formatDateTime(value) {
 
 function getErrors(payload, operationName) {
   return payload?.data?.[operationName]?.userErrors ?? [];
-}
-
-async function queryExistingShelves() {
-  const collected = [];
-
-  let sectionsAfter = null;
-  let readableAfter = null;
-  let sectionsHasNext = true;
-  let readableHasNext = true;
-  let pages = 0;
-
-  while ((sectionsHasNext || readableHasNext) && pages < 25) {
-    const result = await shopify.query(GET_EXISTING_SHELVES, {
-      variables: {
-        sectionsAfter: sectionsHasNext ? sectionsAfter : null,
-        readableAfter: readableHasNext ? readableAfter : null,
-      },
-    });
-
-    const sectionsConnection =
-      result?.data?.sectionsDefinition?.metafields;
-    const readableConnection =
-      result?.data?.readableDefinition?.metafields;
-
-    if (sectionsHasNext && sectionsConnection) {
-      for (const metafield of sectionsConnection.nodes ?? []) {
-        collected.push(...parseSectionList(metafield.value));
-      }
-
-      sectionsHasNext = Boolean(
-        sectionsConnection.pageInfo?.hasNextPage,
-      );
-      sectionsAfter =
-        sectionsConnection.pageInfo?.endCursor ?? null;
-    } else {
-      sectionsHasNext = false;
-    }
-
-    if (readableHasNext && readableConnection) {
-      for (const metafield of readableConnection.nodes ?? []) {
-        collected.push(
-          ...parseLegacyReadableShelf(metafield.value),
-        );
-      }
-
-      readableHasNext = Boolean(
-        readableConnection.pageInfo?.hasNextPage,
-      );
-      readableAfter =
-        readableConnection.pageInfo?.endCursor ?? null;
-    } else {
-      readableHasNext = false;
-    }
-
-    pages += 1;
-  }
-
-  return uniqueShelves(collected).sort((a, b) =>
-    a.localeCompare(b, "sv-SE", {sensitivity: "base"}),
-  );
 }
 
 async function queryProduct(productId) {
@@ -411,8 +309,6 @@ function ShelfBlock() {
   const [initialShelves, setInitialShelves] = useState([]);
   const [inputValue, setInputValue] = useState("");
   const [selectedExistingShelf, setSelectedExistingShelf] = useState("");
-  const [availableShelves, setAvailableShelves] = useState([]);
-  const [loadingAvailableShelves, setLoadingAvailableShelves] = useState(true);
   const [updatedAt, setUpdatedAt] = useState("");
   const [legacyFallback, setLegacyFallback] = useState(false);
   const [message, setMessage] = useState(null);
@@ -429,28 +325,15 @@ function ShelfBlock() {
       shelves.map((shelf) => shelf.toLocaleLowerCase("sv-SE")),
     );
 
-    return availableShelves.filter(
-      (shelf) => !used.has(shelf.toLocaleLowerCase("sv-SE")),
+    return SHELF_SECTIONS.filter(
+      (section) =>
+        !used.has(section.name.toLocaleLowerCase("sv-SE")),
     );
-  }, [availableShelves, shelves]);
+  }, [shelves]);
 
   useEffect(() => {
     load();
-    loadAvailableShelves();
   }, [productId]);
-
-  async function loadAvailableShelves() {
-    setLoadingAvailableShelves(true);
-
-    try {
-      const values = await queryExistingShelves();
-      setAvailableShelves(values);
-    } catch (error) {
-      console.error("[DL Butikshylla] shelf list error", error);
-    } finally {
-      setLoadingAvailableShelves(false);
-    }
-  }
 
   async function load() {
     if (!productId) {
@@ -554,7 +437,6 @@ function ShelfBlock() {
         cleaned.length > 0 ? COPY.saveSuccess : COPY.saveEmptySuccess;
 
       setMessage({tone: "success", text});
-      loadAvailableShelves();
 
       try {
         shopify.toast.show(text);
@@ -618,12 +500,7 @@ function ShelfBlock() {
 
         <s-divider />
 
-        {loadingAvailableShelves ? (
-          <s-stack direction="inline" gap="small" alignItems="center">
-            <s-spinner accessibilityLabel={COPY.loadingShelves} />
-            <s-text tone="subdued">{COPY.loadingShelves}</s-text>
-          </s-stack>
-        ) : selectableShelves.length > 0 ? (
+        {selectableShelves.length > 0 ? (
           <s-stack direction="inline" gap="small" alignItems="end">
             <s-select
               label={COPY.existingLabel}
@@ -633,9 +510,9 @@ function ShelfBlock() {
                 setSelectedExistingShelf(event.currentTarget.value)
               }
             >
-              {selectableShelves.map((shelf) => (
-                <s-option key={shelf} value={shelf}>
-                  {shelf}
+              {selectableShelves.map((section) => (
+                <s-option key={section.name} value={section.name}>
+                  {section.name} ({section.area})
                 </s-option>
               ))}
             </s-select>
