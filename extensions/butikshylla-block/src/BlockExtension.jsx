@@ -28,7 +28,11 @@ const METAFIELDS = {
 const COPY = {
   heading: "Butikshylla",
   empty: "Ingen hylla är registrerad ännu.",
-  inputLabel: "Lägg till hylla",
+  existingLabel: "Välj befintlig hylla",
+  existingPlaceholder: "Välj en hylla",
+  loadingShelves: "Läser in befintliga hyllor…",
+  noExistingShelves: "Inga andra hyllor hittades ännu.",
+  newShelfLabel: "Skapa ny hylla",
   inputPlaceholder: "Exempel: Strategi",
   add: "Lägg till",
   save: "Spara hyllplacering",
@@ -80,6 +84,28 @@ const GET_PRODUCT_SHELVES = `
         value
         type
         updatedAt
+      }
+    }
+  }
+`;
+
+const GET_EXISTING_SHELVES = `
+  query DlGetExistingShelves($after: String) {
+    metafieldDefinition(
+      identifier: {
+        ownerType: PRODUCT
+        namespace: "custom"
+        key: "butikshylla_sektioner"
+      }
+    ) {
+      metafields(first: 250, after: $after) {
+        nodes {
+          value
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
       }
     }
   }
@@ -182,6 +208,34 @@ function formatDateTime(value) {
 
 function getErrors(payload, operationName) {
   return payload?.data?.[operationName]?.userErrors ?? [];
+}
+
+async function queryExistingShelves() {
+  const collected = [];
+  let after = null;
+  let hasNextPage = true;
+  let pages = 0;
+
+  while (hasNextPage && pages < 25) {
+    const result = await shopify.query(GET_EXISTING_SHELVES, {
+      variables: {after},
+    });
+
+    const connection = result?.data?.metafieldDefinition?.metafields;
+    if (!connection) break;
+
+    for (const metafield of connection.nodes ?? []) {
+      collected.push(...parseSectionList(metafield.value));
+    }
+
+    hasNextPage = Boolean(connection.pageInfo?.hasNextPage);
+    after = connection.pageInfo?.endCursor ?? null;
+    pages += 1;
+  }
+
+  return uniqueShelves(collected).sort((a, b) =>
+    a.localeCompare(b, "sv-SE", {sensitivity: "base"}),
+  );
 }
 
 async function queryProduct(productId) {
@@ -297,6 +351,9 @@ function ShelfBlock() {
   const [shelves, setShelves] = useState([]);
   const [initialShelves, setInitialShelves] = useState([]);
   const [inputValue, setInputValue] = useState("");
+  const [selectedExistingShelf, setSelectedExistingShelf] = useState("");
+  const [availableShelves, setAvailableShelves] = useState([]);
+  const [loadingAvailableShelves, setLoadingAvailableShelves] = useState(true);
   const [updatedAt, setUpdatedAt] = useState("");
   const [legacyFallback, setLegacyFallback] = useState(false);
   const [message, setMessage] = useState(null);
@@ -308,9 +365,33 @@ function ShelfBlock() {
     [shelves, initialShelves, legacyFallback],
   );
 
+  const selectableShelves = useMemo(() => {
+    const used = new Set(
+      shelves.map((shelf) => shelf.toLocaleLowerCase("sv-SE")),
+    );
+
+    return availableShelves.filter(
+      (shelf) => !used.has(shelf.toLocaleLowerCase("sv-SE")),
+    );
+  }, [availableShelves, shelves]);
+
   useEffect(() => {
     load();
+    loadAvailableShelves();
   }, [productId]);
+
+  async function loadAvailableShelves() {
+    setLoadingAvailableShelves(true);
+
+    try {
+      const values = await queryExistingShelves();
+      setAvailableShelves(values);
+    } catch (error) {
+      console.error("[DL Butikshylla] shelf list error", error);
+    } finally {
+      setLoadingAvailableShelves(false);
+    }
+  }
 
   async function load() {
     if (!productId) {
@@ -352,6 +433,13 @@ function ShelfBlock() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function addExistingShelf() {
+    if (!selectedExistingShelf) return;
+
+    addShelf(selectedExistingShelf);
+    setSelectedExistingShelf("");
   }
 
   function addShelf(rawValue = inputValue) {
@@ -407,6 +495,7 @@ function ShelfBlock() {
         cleaned.length > 0 ? COPY.saveSuccess : COPY.saveEmptySuccess;
 
       setMessage({tone: "success", text});
+      loadAvailableShelves();
 
       try {
         shopify.toast.show(text);
@@ -470,9 +559,41 @@ function ShelfBlock() {
 
         <s-divider />
 
+        {loadingAvailableShelves ? (
+          <s-stack direction="inline" gap="small" alignItems="center">
+            <s-spinner accessibilityLabel={COPY.loadingShelves} />
+            <s-text tone="subdued">{COPY.loadingShelves}</s-text>
+          </s-stack>
+        ) : selectableShelves.length > 0 ? (
+          <s-stack direction="inline" gap="small" alignItems="end">
+            <s-select
+              label={COPY.existingLabel}
+              placeholder={COPY.existingPlaceholder}
+              value={selectedExistingShelf}
+              onChange={(event) =>
+                setSelectedExistingShelf(event.currentTarget.value)
+              }
+            >
+              {selectableShelves.map((shelf) => (
+                <s-option key={shelf} value={shelf}>
+                  {shelf}
+                </s-option>
+              ))}
+            </s-select>
+            <s-button
+              disabled={!selectedExistingShelf}
+              onClick={addExistingShelf}
+            >
+              {COPY.add}
+            </s-button>
+          </s-stack>
+        ) : (
+          <s-text tone="subdued">{COPY.noExistingShelves}</s-text>
+        )}
+
         <s-stack direction="inline" gap="small" alignItems="end">
           <s-text-field
-            label={COPY.inputLabel}
+            label={COPY.newShelfLabel}
             placeholder={COPY.inputPlaceholder}
             value={inputValue}
             onInput={(event) => setInputValue(event.currentTarget.value)}
