@@ -216,7 +216,7 @@ function parseLegacyReadableShelf(value) {
 
   return uniqueShelves(
     String(value)
-      .split(/[,;\n]/)
+      .split(/[,;\n]|\s+\/\s+/)
       .map((part) => part.trim()),
   );
 }
