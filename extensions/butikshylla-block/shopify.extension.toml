@@ -3,6 +3,8 @@ api_version = "2026-07"
 [[extensions]]
 name = "Butikshylla"
 handle = "butikshylla-block"
+
+uid = "67e40f9f-3961-568a-a4a1-94154ab01626f8f8b431"
 type = "ui_extension"
 description = "Visa och redigera produktens hyllplacering direkt på produktsidan."
 
