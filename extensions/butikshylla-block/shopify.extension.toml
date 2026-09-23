@@ -1,0 +1,11 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "Butikshylla"
+handle = "butikshylla-block"
+type = "ui_extension"
+description = "Visa och redigera produktens hyllplacering direkt på produktsidan."
+
+[[extensions.targeting]]
+module = "./src/BlockExtension.jsx"
+target = "admin.product-details.block.render"
