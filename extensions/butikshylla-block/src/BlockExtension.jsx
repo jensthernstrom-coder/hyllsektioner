@@ -302,8 +302,10 @@ function ShelfBlock() {
   const [message, setMessage] = useState(null);
 
   const isDirty = useMemo(
-    () => JSON.stringify(shelves) !== JSON.stringify(initialShelves),
-    [shelves, initialShelves],
+    () =>
+      legacyFallback ||
+      JSON.stringify(shelves) !== JSON.stringify(initialShelves),
+    [shelves, initialShelves, legacyFallback],
   );
 
   useEffect(() => {
