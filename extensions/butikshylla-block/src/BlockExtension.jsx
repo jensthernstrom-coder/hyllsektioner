@@ -177,7 +177,13 @@ const DELETE_METAFIELDS = `
    ============================================================ */
 
 function normalizeShelfName(value) {
-  return String(value ?? "").trim().replace(/\s+/g, " ");
+  return String(value ?? "")
+    .replace(
+      /\s*\(uppdaterad\s+\d{4}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2})?\)\s*$/i,
+      "",
+    )
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 function uniqueShelves(values) {
