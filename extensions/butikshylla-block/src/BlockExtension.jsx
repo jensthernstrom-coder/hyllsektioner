@@ -41,6 +41,11 @@ export default async () => {
   render(<ShelfBlock />, document.body);
 };
 
+// Behåll Shopifys query-anrop bundet till rätt API-objekt.
+function queryShopify(document, options) {
+  return shopify.query(document, options);
+}
+
 // START: DL BUTIKSHYLLA - KUND-/PERSONALVY
 function ShelfBlock() {
   const productId = shopify.data.selected?.[0]?.id;
@@ -82,6 +87,7 @@ function ShelfBlock() {
     const request = ++requestRef.current;
     setLoading(true);
     setReady(false);
+    setSaving(false);
     setReloadWarning(false);
     setMessage(null);
     setShelves([]);
@@ -94,7 +100,7 @@ function ShelfBlock() {
 
     try {
       if (!id) throw new Error("Ingen produkt är vald.");
-      const state = await loadProductShelves(shopify.query, id);
+      const state = await loadProductShelves(queryShopify, id);
       if (request !== requestRef.current || currentProductRef.current !== id) return;
       setShelves(state.shelves);
       setInitialShelves(state.shelves);
@@ -151,8 +157,8 @@ function ShelfBlock() {
     try {
       const cleaned = uniqueShelves(shelves);
       const result = cleaned.length
-        ? await saveProductShelves(shopify.query, saveId, cleaned, digestsRef.current)
-        : await removeProductShelves(shopify.query, saveId, digestsRef.current);
+        ? await saveProductShelves(queryShopify, saveId, cleaned, digestsRef.current)
+        : await removeProductShelves(queryShopify, saveId, digestsRef.current);
 
       if (currentProductRef.current !== saveId) return;
       digestsRef.current = result.digests;
