@@ -1,68 +1,52 @@
 # Hyllsektioner
 
-Shopify Admin UI Extension för att visa och redigera en produkts hyllplacering direkt på produktsidan.
+Shopify-hostad Admin UI Extension för att läsa och redigera en produkts hyllplacering direkt i Shopify Admin.
 
-## Metafält
+## Arkitektur (DL Guldstandard)
 
-Appblocket använder:
+- Ingen extern server, Netlify, databas eller kundvy behövs.
+- Shopify är datakälla. Tre befintliga metafält används utan migration.
+- Gränssnitt: extensions/butikshylla-block/src/BlockExtension.jsx
+- Domänregler: extensions/butikshylla-block/src/shelf-model.js
+- Shopify-anrop: extensions/butikshylla-block/src/shelf-api.js
+- Hyllförslag: extensions/butikshylla-block/src/shelves.js (synkas manuellt mot Inventeringsappen).
+- Behörighet: endast write_products. Direkt GraphQL Admin API i extensionen.
 
-- `custom.butikshylla`
-  - Typ: `single_line_text_field`
-  - Läsbar sammanfattning
-- `custom.butikshylla_sektioner`
-  - Typ: `list.single_line_text_field`
-  - Masterfält för flera hyllor
-- `custom.butikshylla_uppdaterad`
-  - Typ: `date_time`
-  - Senaste uppdatering
+## Metafält (ändra inte nycklar)
 
-## Funktioner
+- custom.butikshylla (single_line_text_field) – äldre läsbar representation.
+- custom.butikshylla_sektioner (list.single_line_text_field) – master för flera hyllor.
+- custom.butikshylla_uppdaterad (date_time) – tidsstämpel när hyllor sparades.
 
-- visar en eller flera hyllor
-- lägger till nya hyllor
-- tar bort hyllor
-- stoppar dubbletter
-- synkar alla tre metafälten
-- migrerar äldre data från `custom.butikshylla` om listfältet saknas
-- visar senaste uppdateringstid
+## Driftsäkerhet
 
-## Viktigt före deploy
+- En befintlig tom masterlista migreras inte från en gammal text.
+- Felaktig JSON blockerar redigering i stället för att kasta bort data.
+- Hyllnamn normaliseras, dubbletter stoppas, maxlängden valideras.
+- Alla tre fälten sparas atomärt med metafieldsSet och compareDigest.
+- Borttagning görs med ett metafieldsDelete-anrop för tre fält; föregås av konfliktkontroll.
+- OBS: metafieldsDelete har inget compareDigest. Ett kort racefönster mellan kontroll och borttagning återstår.
+- Begäranden till äldre produktvy får inte skriva över nyare skärmläge.
+- Om produkten inte kunde läsas är redigering avstängd.
+- 'Läs om' kräver bekräftelse om det finns osparade ändringar.
 
-Det här repot innehåller själva extensionen, men behöver kopplas till en Shopify-app.
+## Test och release
 
-Appens `shopify.app.toml` behöver minst:
+1. Kör npm test från projektroten med Node 22 eller senare.
+2. Kör shopify app dev i utvecklingsbutiken. Kontrollera Shopify-blocket manuellt.
+3. Prova äldre text, flera hyllor, tom produkt, sparande, borttagning, konflikt och om-läsning.
+4. Kör shopify app deploy --no-release. Kontrollera den skapade versionen.
+5. Först efter godkänd kontroll: släpp versionen via Shopify Dev Dashboard eller CLI.
 
-```toml
-[access_scopes]
-scopes = "write_products"
-```
+Shopify CLI krävs lokalt för dev/deploy. Denna repo-version innehåller inga inloggningsuppgifter.
 
-Om appen redan har andra scopes ska `write_products` läggas till, inte ersätta dem.
+## Appadress
 
-## Extension
+Appen är extension-only och använder Shopifys officiella standardadress i shopify.app.toml i stället för example.com.
+Huvudfunktionen är blocket 'Butikshylla' på en produktsida; det kräver ingen separat App Home-server.
 
-```text
-extensions/
-└── butikshylla-block/
-    ├── locales/
-    │   └── en.default.json
-    ├── src/
-    │   └── BlockExtension.jsx
-    ├── package.json
-    └── shopify.extension.toml
-```
+## Built for Shopify
 
-## UID
-
-Shopify kräver ett UID för extensionen. Det ska skapas av Shopify och ska inte hittas på manuellt.
-
-När extensionen kopplas till appen kan Shopify CLI/deploy skapa UID, eller så kan man generera en tom Admin block-extension i rätt app och sedan behålla det UID Shopify ger den.
-
-## Nästa steg
-
-1. Koppla detta repo till rätt Shopify-app.
-2. Säkerställ `write_products`.
-3. Låt Shopify skapa extension-UID.
-4. Deploya appversionen.
-5. Lägg till/fäst blocket **Butikshylla** på produktsidan i Shopify Admin.
-6. Testa på en produkt med ett befintligt hyllvärde.
+Koden följer flera tekniska principer (inbyggt admin-UI, GraphQL, färre scopes, lättviktig drift).
+Detta är en intern/custom-distribution-app och kan inte som sådan garanteras Built for Shopify-badge.
+En publik App Store-app skulle kräva en annan distributions-/App Home-lösning och Shopify-granskning.
