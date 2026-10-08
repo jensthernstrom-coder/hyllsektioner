@@ -12,7 +12,7 @@ automatically_update_urls_on_dev = false
 api_version = "2026-07"
 
 [access_scopes]
-scopes = "write_products"
+scopes = "write_products,read_metaobjects"
 optional_scopes = []
 use_legacy_install_flow = false
 
