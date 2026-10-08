@@ -1,463 +1,244 @@
-import '@shopify/ui-extensions/preact';
+import "@shopify/ui-extensions/preact";
 import {render} from "preact";
-import {useEffect, useMemo, useState} from "preact/hooks";
+import {useEffect, useMemo, useRef, useState} from "preact/hooks";
 import {SHELF_SECTIONS} from "./shelves.js";
+import {
+  formatDateTime, summarizeShelves, uniqueShelves, validateShelfName,
+} from "./shelf-model.js";
+import {
+  loadProductShelves, removeProductShelves, saveProductShelves,
+} from "./shelf-api.js";
 
-/* ============================================================
-   START: DL BUTIKSHYLLA – KONFIGURATION
-   Ändra i första hand bara värden i detta block.
-   ============================================================ */
-
-const METAFIELDS = {
-  readable: {
-    namespace: "custom",
-    key: "butikshylla",
-    type: "single_line_text_field",
-  },
-  sections: {
-    namespace: "custom",
-    key: "butikshylla_sektioner",
-    type: "list.single_line_text_field",
-  },
-  updated: {
-    namespace: "custom",
-    key: "butikshylla_uppdaterad",
-    type: "date_time",
-  },
-};
-
+// START: DL BUTIKSHYLLA – TEXTER
 const COPY = {
   heading: "Butikshylla",
-  empty: "Ingen hylla är registrerad ännu.",
-  existingLabel: "Välj befintlig hylla",
-  existingPlaceholder: "Välj en hylla",
-  loadingShelves: "Läser in befintliga hyllor…",
-  noExistingShelves: "Inga andra hyllor hittades ännu.",
-  newShelfLabel: "Skapa ny hylla",
-  inputPlaceholder: "Exempel: Strategi",
+  empty: "Ingen hylla registrerad",
+  edit: "Redigera",
+  addMode: "Lägg till",
+  removeMode: "Ta bort",
+  pickExisting: "Välj hylla att lägga till",
+  pickToRemove: "Välj hylla att ta bort",
+  placeholder: "Välj en hylla",
+  custom: "Skapa ny hylla",
+  customLabel: "Namn på ny hylla",
+  customPlaceholder: "Exempel: Strategi",
+  noMoreShelves: "Alla förvalda hyllor är tillagda.",
+  noShelvesToRemove: "Det finns inga hyllor att ta bort.",
   add: "Lägg till",
-  save: "Spara hyllplacering",
+  back: "Tillbaka",
+  save: "Spara",
   saving: "Sparar…",
+  cancel: "Avbryt",
   reload: "Läs om",
-  remove: "Ta bort",
-  updatedPrefix: "Senast uppdaterad:",
-  oldDataNotice:
-    "Den här produkten hade bara den äldre hylltexten. Spara för att även fylla i sektionslistan.",
+  updated: "Senast uppdaterad:",
+  legacy: "Äldre hyllinformation. Spara för att uppdatera.",
   duplicate: "Den hyllan finns redan på produkten.",
-  blank: "Skriv ett hyllnamn först.",
-  saveSuccess: "Hyllplaceringen är uppdaterad.",
-  saveEmptySuccess: "Hyllplaceringen är borttagen.",
-  loadError: "Kunde inte läsa produktens hyllinformation.",
+  pending: "Osparade ändringar",
+  saved: "Hyllplaceringen är uppdaterad.",
+  removed: "Hyllplaceringen är borttagen.",
+  loadError: "Kunde inte läsa hyllplaceringen.",
   saveError: "Kunde inte spara hyllplaceringen.",
+  loading: "Laddar hyllplacering…",
 };
-
-const QUICK_SHELVES = [
-  // "Familjespel",
-  // "Strategi",
-  // "Två spelare",
-];
-
-/* ============================================================
-   END: DL BUTIKSHYLLA – KONFIGURATION
-   ============================================================ */
-
-
-/* ============================================================
-   START: DL BUTIKSHYLLA – GRAPHQL
-   ============================================================ */
-
-const GET_PRODUCT_SHELVES = `
-  query DlGetProductShelves($id: ID!) {
-    product(id: $id) {
-      id
-      title
-      readableShelf: metafield(namespace: "custom", key: "butikshylla") {
-        value
-        type
-        updatedAt
-      }
-      shelfSections: metafield(namespace: "custom", key: "butikshylla_sektioner") {
-        value
-        type
-        updatedAt
-      }
-      shelfUpdated: metafield(namespace: "custom", key: "butikshylla_uppdaterad") {
-        value
-        type
-        updatedAt
-      }
-    }
-  }
-`;
-
-const SET_METAFIELDS = `
-  mutation DlSetShelfMetafields($metafields: [MetafieldsSetInput!]!) {
-    metafieldsSet(metafields: $metafields) {
-      metafields {
-        namespace
-        key
-        value
-        type
-        updatedAt
-      }
-      userErrors {
-        field
-        message
-        code
-      }
-    }
-  }
-`;
-
-const DELETE_METAFIELDS = `
-  mutation DlDeleteShelfMetafields($metafields: [MetafieldIdentifierInput!]!) {
-    metafieldsDelete(metafields: $metafields) {
-      deletedMetafields {
-        ownerId
-        namespace
-        key
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
-
-/* ============================================================
-   END: DL BUTIKSHYLLA – GRAPHQL
-   ============================================================ */
-
-
-/* ============================================================
-   START: DL BUTIKSHYLLA – HJÄLPFUNKTIONER
-   ============================================================ */
-
-function normalizeShelfName(value) {
-  return String(value ?? "")
-    .replace(
-      /\s*\(uppdaterad\s+\d{4}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2})?\)\s*$/i,
-      "",
-    )
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function uniqueShelves(values) {
-  const seen = new Set();
-
-  return values
-    .map(normalizeShelfName)
-    .filter(Boolean)
-    .filter((value) => {
-      const key = value.toLocaleLowerCase("sv-SE");
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
-
-function parseSectionList(value) {
-  if (!value) return [];
-
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) return uniqueShelves(parsed);
-  } catch {}
-
-  return [];
-}
-
-function parseLegacyReadableShelf(value) {
-  if (!value) return [];
-
-  return uniqueShelves(
-    String(value)
-      .split(/[,;\n]|\s+\/\s+/)
-      .map((part) => part.trim()),
-  );
-}
-
-function formatDateTime(value) {
-  if (!value) return "";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat("sv-SE", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function getErrors(payload, operationName) {
-  return payload?.data?.[operationName]?.userErrors ?? [];
-}
-
-async function queryProduct(productId) {
-  return shopify.query(GET_PRODUCT_SHELVES, {
-    variables: {id: productId},
-  });
-}
-
-async function setShelfMetafields(productId, shelves) {
-  const now = new Date().toISOString();
-
-  const result = await shopify.query(SET_METAFIELDS, {
-    variables: {
-      metafields: [
-        {
-          ownerId: productId,
-          namespace: METAFIELDS.sections.namespace,
-          key: METAFIELDS.sections.key,
-          type: METAFIELDS.sections.type,
-          value: JSON.stringify(shelves),
-        },
-        {
-          ownerId: productId,
-          namespace: METAFIELDS.readable.namespace,
-          key: METAFIELDS.readable.key,
-          type: METAFIELDS.readable.type,
-          value: shelves.join(", "),
-        },
-        {
-          ownerId: productId,
-          namespace: METAFIELDS.updated.namespace,
-          key: METAFIELDS.updated.key,
-          type: METAFIELDS.updated.type,
-          value: now,
-        },
-      ],
-    },
-  });
-
-  const errors = getErrors(result, "metafieldsSet");
-  if (errors.length) {
-    throw new Error(errors.map((error) => error.message).join(" | "));
-  }
-
-  return now;
-}
-
-async function clearShelfMetafields(productId) {
-  const deleteResult = await shopify.query(DELETE_METAFIELDS, {
-    variables: {
-      metafields: [
-        {
-          ownerId: productId,
-          namespace: METAFIELDS.sections.namespace,
-          key: METAFIELDS.sections.key,
-        },
-        {
-          ownerId: productId,
-          namespace: METAFIELDS.readable.namespace,
-          key: METAFIELDS.readable.key,
-        },
-      ],
-    },
-  });
-
-  const deleteErrors = getErrors(deleteResult, "metafieldsDelete");
-  if (deleteErrors.length) {
-    throw new Error(deleteErrors.map((error) => error.message).join(" | "));
-  }
-
-  const now = new Date().toISOString();
-
-  const setResult = await shopify.query(SET_METAFIELDS, {
-    variables: {
-      metafields: [
-        {
-          ownerId: productId,
-          namespace: METAFIELDS.updated.namespace,
-          key: METAFIELDS.updated.key,
-          type: METAFIELDS.updated.type,
-          value: now,
-        },
-      ],
-    },
-  });
-
-  const setErrors = getErrors(setResult, "metafieldsSet");
-  if (setErrors.length) {
-    throw new Error(setErrors.map((error) => error.message).join(" | "));
-  }
-
-  return now;
-}
-
-/* ============================================================
-   END: DL BUTIKSHYLLA – HJÄLPFUNKTIONER
-   ============================================================ */
-
-
-/* ============================================================
-   START: DL BUTIKSHYLLA – UI
-   ============================================================ */
+// END: DL BUTIKSHYLLA – TEXTER
 
 export default async () => {
   render(<ShelfBlock />, document.body);
 };
 
+function queryShopify(document, options) {
+  return shopify.query(document, options);
+}
+
+// START: DL BUTIKSHYLLA – KOMPAKT ADMIN-BLOCK
+// Shopify kapar admin-block med innehåll som är högre än 300px.
+// Visa därför bara sammanfattningen tills användaren väljer Redigera.
+// I redigeringsläget visas endast ett fält åt gången.
 function ShelfBlock() {
   const productId = shopify.data.selected?.[0]?.id;
+  const currentProductRef = useRef(productId);
+  currentProductRef.current = productId;
+  const requestRef = useRef(0);
+  const digestsRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [shelves, setShelves] = useState([]);
   const [initialShelves, setInitialShelves] = useState([]);
-  const [inputValue, setInputValue] = useState("");
-  const [selectedExistingShelf, setSelectedExistingShelf] = useState("");
   const [updatedAt, setUpdatedAt] = useState("");
   const [legacyFallback, setLegacyFallback] = useState(false);
   const [message, setMessage] = useState(null);
 
+  // Endast presentation. Hyllorna sparas inte förrän användaren klickar Spara.
+  const [editing, setEditing] = useState(false);
+  const [mode, setMode] = useState("add");
+  const [custom, setCustom] = useState(false);
+  const [selectedShelf, setSelectedShelf] = useState("");
+  const [inputValue, setInputValue] = useState("");
+
   const isDirty = useMemo(
-    () =>
-      legacyFallback ||
-      JSON.stringify(shelves) !== JSON.stringify(initialShelves),
+    () => legacyFallback || JSON.stringify(shelves) !== JSON.stringify(initialShelves),
     [shelves, initialShelves, legacyFallback],
   );
+  const editable = ready && !loading && !saving;
 
   const selectableShelves = useMemo(() => {
-    const used = new Set(
-      shelves.map((shelf) => shelf.toLocaleLowerCase("sv-SE")),
-    );
-
+    const used = new Set(shelves.map((name) => name.toLocaleLowerCase("sv-SE")));
     return SHELF_SECTIONS.filter(
-      (section) =>
-        !used.has(section.name.toLocaleLowerCase("sv-SE")),
+      (section) => !used.has(section.name.toLocaleLowerCase("sv-SE")),
     );
   }, [shelves]);
 
+  const summary = summarizeShelves(shelves, 2);
+
   useEffect(() => {
-    load();
+    void load(productId);
+    return () => { requestRef.current += 1; };
   }, [productId]);
 
-  async function load() {
-    if (!productId) {
-      setMessage({tone: "critical", text: COPY.loadError});
-      setLoading(false);
-      return;
-    }
+  function resetEditor() {
+    setEditing(false);
+    setMode("add");
+    setCustom(false);
+    setSelectedShelf("");
+    setInputValue("");
+  }
 
+  async function load(id = productId) {
+    const request = ++requestRef.current;
     setLoading(true);
+    setReady(false);
+    setSaving(false);
     setMessage(null);
+    setShelves([]);
+    setInitialShelves([]);
+    setLegacyFallback(false);
+    setUpdatedAt("");
+    digestsRef.current = null;
+    resetEditor();
 
     try {
-      const result = await queryProduct(productId);
-      const product = result?.data?.product;
-
-      if (!product) throw new Error("Produkten kunde inte hittas.");
-
-      const structured = parseSectionList(product.shelfSections?.value);
-      const legacy = parseLegacyReadableShelf(product.readableShelf?.value);
-
-      const usingLegacy = structured.length === 0 && legacy.length > 0;
-      const nextShelves = usingLegacy ? legacy : structured;
-
-      setShelves(nextShelves);
-      setInitialShelves(nextShelves);
-      setLegacyFallback(usingLegacy);
-      setUpdatedAt(
-        product.shelfUpdated?.value ??
-          product.shelfSections?.updatedAt ??
-          product.readableShelf?.updatedAt ??
-          "",
-      );
+      if (!id) throw new Error("Ingen produkt är vald.");
+      const state = await loadProductShelves(queryShopify, id);
+      if (request !== requestRef.current || currentProductRef.current !== id) return;
+      setShelves(state.shelves);
+      setInitialShelves(state.shelves);
+      setLegacyFallback(state.legacyFallback);
+      setUpdatedAt(state.updatedAt);
+      digestsRef.current = state.digests;
+      setReady(true);
     } catch (error) {
-      console.error("[DL Butikshylla] load error", error);
+      if (request !== requestRef.current || currentProductRef.current !== id) return;
+      console.error("[DL Butikshylla] load", error);
       setMessage({
         tone: "critical",
-        text: `${COPY.loadError} ${error?.message ?? ""}`.trim(),
+        text: COPY.loadError + " " + (error?.message ?? ""),
       });
     } finally {
-      setLoading(false);
+      if (request === requestRef.current && currentProductRef.current === id) {
+        setLoading(false);
+      }
     }
   }
 
-  function addExistingShelf() {
-    if (!selectedExistingShelf) return;
-
-    addShelf(selectedExistingShelf);
-    setSelectedExistingShelf("");
-  }
-
-  function addShelf(rawValue = inputValue) {
-    const shelf = normalizeShelfName(rawValue);
-
-    if (!shelf) {
-      setMessage({tone: "warning", text: COPY.blank});
+  function addShelf(value) {
+    if (!editable || !editing) return;
+    let shelf;
+    try {
+      shelf = validateShelfName(value);
+    } catch (error) {
+      setMessage({tone: "warning", text: error.message});
       return;
     }
-
-    const exists = shelves.some(
-      (existing) =>
-        existing.toLocaleLowerCase("sv-SE") ===
-        shelf.toLocaleLowerCase("sv-SE"),
-    );
-
-    if (exists) {
+    if (shelves.some((item) =>
+      item.toLocaleLowerCase("sv-SE") === shelf.toLocaleLowerCase("sv-SE")
+    )) {
       setMessage({tone: "warning", text: COPY.duplicate});
       return;
     }
-
     setShelves((current) => [...current, shelf]);
+    setSelectedShelf("");
+    setInputValue("");
+    setCustom(false);
+    setMessage(null);
+  }
+
+  function removeShelf(name) {
+    if (!editable || !editing || !name) return;
+    setShelves((current) => current.filter((item) => item !== name));
+    setSelectedShelf("");
+    setMessage(null);
+  }
+
+  function switchMode(next) {
+    if (!editable) return;
+    setMode(next);
+    setCustom(false);
+    setSelectedShelf("");
     setInputValue("");
     setMessage(null);
   }
 
-  function removeShelf(index) {
-    setShelves((current) =>
-      current.filter((_, currentIndex) => currentIndex !== index),
-    );
+  function cancel() {
+    if (!editable) return;
+    // Återställ bara formulärets utkast. Produktens data ändras inte.
+    setShelves(initialShelves);
+    resetEditor();
     setMessage(null);
   }
 
   async function save() {
-    if (!productId || saving) return;
-
+    if (!editable || !editing || !isDirty || !productId || !digestsRef.current) return;
+    const saveId = productId;
     setSaving(true);
     setMessage(null);
 
     try {
       const cleaned = uniqueShelves(shelves);
-      const newUpdatedAt =
-        cleaned.length > 0
-          ? await setShelfMetafields(productId, cleaned)
-          : await clearShelfMetafields(productId);
+      const result = cleaned.length
+        ? await saveProductShelves(queryShopify, saveId, cleaned, digestsRef.current)
+        : await removeProductShelves(queryShopify, saveId, digestsRef.current);
 
+      if (currentProductRef.current !== saveId) return;
+      digestsRef.current = result.digests;
       setShelves(cleaned);
       setInitialShelves(cleaned);
+      setUpdatedAt(result.updatedAt);
       setLegacyFallback(false);
-      setUpdatedAt(newUpdatedAt);
-
-      const text =
-        cleaned.length > 0 ? COPY.saveSuccess : COPY.saveEmptySuccess;
-
+      resetEditor();
+      const text = cleaned.length ? COPY.saved : COPY.removed;
       setMessage({tone: "success", text});
-
-      try {
-        shopify.toast.show(text);
-      } catch {}
+      try { shopify.toast.show(text); } catch {}
     } catch (error) {
-      console.error("[DL Butikshylla] save error", error);
+      if (currentProductRef.current !== saveId) return;
+      console.error("[DL Butikshylla] save", error);
       setMessage({
         tone: "critical",
-        text: `${COPY.saveError} ${error?.message ?? ""}`.trim(),
+        text: COPY.saveError + " " + (error?.message ?? ""),
       });
     } finally {
-      setSaving(false);
+      if (currentProductRef.current === saveId) setSaving(false);
     }
   }
 
   if (loading) {
     return (
       <s-admin-block heading={COPY.heading}>
-        <s-stack direction="inline" gap="base" alignItems="center">
-          <s-spinner accessibilityLabel="Laddar hyllplacering" />
-          <s-text>Laddar hyllplacering…</s-text>
+        <s-stack direction="inline" gap="small" alignItems="center">
+          <s-spinner accessibilityLabel={COPY.loading} />
+          <s-text>{COPY.loading}</s-text>
+        </s-stack>
+      </s-admin-block>
+    );
+  }
+
+  if (!ready) {
+    return (
+      <s-admin-block heading={COPY.heading}>
+        <s-stack direction="block" gap="small">
+          {message ? <s-banner tone={message.tone} heading={message.text} /> : null}
+          <s-button onClick={() => void load(productId)}>{COPY.reload}</s-button>
         </s-stack>
       </s-admin-block>
     );
@@ -465,123 +246,118 @@ function ShelfBlock() {
 
   return (
     <s-admin-block heading={COPY.heading}>
-      <s-stack direction="block" gap="base">
-        {message ? (
-          <s-banner heading={message.text} tone={message.tone} />
-        ) : null}
+      <s-stack direction="block" gap="small">
+        {message ? <s-banner tone={message.tone} heading={message.text} /> : null}
 
-        {legacyFallback ? (
-          <s-banner heading={COPY.oldDataNotice} tone="info" />
-        ) : null}
-
-        {shelves.length === 0 ? (
-          <s-text>{COPY.empty}</s-text>
-        ) : (
-          <s-stack direction="block" gap="small">
-            {shelves.map((shelf, index) => (
-              <s-stack
-                key={`${shelf}-${index}`}
-                direction="inline"
-                gap="small"
-                alignItems="center"
-              >
-                <s-badge tone="info">{shelf}</s-badge>
-                <s-button
-                  variant="tertiary"
-                  onClick={() => removeShelf(index)}
-                  accessibilityLabel={`${COPY.remove} ${shelf}`}
-                >
-                  {COPY.remove}
-                </s-button>
-              </s-stack>
-            ))}
-          </s-stack>
-        )}
-
-        <s-divider />
-
-        {selectableShelves.length > 0 ? (
-          <s-stack direction="inline" gap="small" alignItems="end">
-            <s-select
-              label={COPY.existingLabel}
-              placeholder={COPY.existingPlaceholder}
-              value={selectedExistingShelf}
-              onChange={(event) =>
-                setSelectedExistingShelf(event.currentTarget.value)
-              }
-            >
-              {selectableShelves.map((section) => (
-                <s-option key={section.name} value={section.name}>
-                  {section.name} ({section.area})
-                </s-option>
+        <s-stack direction="inline" gap="small" alignItems="center">
+          {shelves.length ? (
+            <>
+              {summary.visible.map((name) => (
+                <s-badge key={name} tone="info">{name}</s-badge>
               ))}
-            </s-select>
-            <s-button
-              disabled={!selectedExistingShelf}
-              onClick={addExistingShelf}
-            >
-              {COPY.add}
-            </s-button>
-          </s-stack>
-        ) : (
-          <s-text tone="subdued">{COPY.noExistingShelves}</s-text>
-        )}
-
-        <s-stack direction="inline" gap="small" alignItems="end">
-          <s-text-field
-            label={COPY.newShelfLabel}
-            placeholder={COPY.inputPlaceholder}
-            value={inputValue}
-            onInput={(event) => setInputValue(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                addShelf();
-              }
-            }}
-          />
-          <s-button onClick={() => addShelf()}>{COPY.add}</s-button>
+              {summary.remaining > 0 ? (
+                <s-text tone="subdued">+{summary.remaining} till</s-text>
+              ) : null}
+            </>
+          ) : (
+            <s-text tone="subdued">{COPY.empty}</s-text>
+          )}
         </s-stack>
 
-        {QUICK_SHELVES.length > 0 ? (
-          <s-stack direction="inline" gap="small">
-            {QUICK_SHELVES.map((shelf) => (
-              <s-button
-                key={shelf}
-                variant="tertiary"
-                onClick={() => addShelf(shelf)}
-              >
-                + {shelf}
+        {!editing ? (
+          <>
+            {updatedAt ? (
+              <s-text tone="subdued">{COPY.updated} {formatDateTime(updatedAt)}</s-text>
+            ) : null}
+            {legacyFallback ? <s-text tone="subdued">{COPY.legacy}</s-text> : null}
+            <s-stack direction="inline" gap="small">
+              <s-button variant="primary" onClick={() => setEditing(true)}>
+                {COPY.edit}
               </s-button>
-            ))}
-          </s-stack>
-        ) : null}
+              <s-button variant="tertiary" onClick={() => void load(productId)}>
+                {COPY.reload}
+              </s-button>
+            </s-stack>
+          </>
+        ) : (
+          <>
+            <s-stack direction="inline" gap="small">
+              <s-button variant={mode === "add" ? "primary" : "tertiary"}
+                disabled={!editable} onClick={() => switchMode("add")}>
+                {COPY.addMode}
+              </s-button>
+              <s-button variant={mode === "remove" ? "primary" : "tertiary"}
+                disabled={!editable} onClick={() => switchMode("remove")}>
+                {COPY.removeMode}
+              </s-button>
+              {isDirty ? <s-text tone="subdued">{COPY.pending}</s-text> : null}
+            </s-stack>
 
-        {updatedAt ? (
-          <s-text tone="subdued">
-            {COPY.updatedPrefix} {formatDateTime(updatedAt)}
-          </s-text>
-        ) : null}
+            {mode === "add" && !custom ? (
+              <>
+                {selectableShelves.length ? (
+                  <s-select label={COPY.pickExisting} placeholder={COPY.placeholder}
+                    disabled={!editable} value={selectedShelf}
+                    onChange={(event) => addShelf(event.currentTarget.value)}>
+                    {selectableShelves.map((section) => (
+                      <s-option key={section.name} value={section.name}>
+                        {section.name} ({section.area})
+                      </s-option>
+                    ))}
+                  </s-select>
+                ) : <s-text tone="subdued">{COPY.noMoreShelves}</s-text>}
+                <s-button variant="tertiary" disabled={!editable}
+                  onClick={() => {setCustom(true); setMessage(null);}}>
+                  {COPY.custom}
+                </s-button>
+              </>
+            ) : null}
 
-        <s-stack direction="inline" gap="small">
-          <s-button
-            variant="primary"
-            disabled={!isDirty || saving}
-            loading={saving}
-            onClick={save}
-          >
-            {saving ? COPY.saving : COPY.save}
-          </s-button>
+            {mode === "add" && custom ? (
+              <s-stack direction="block" gap="small">
+                <s-text-field label={COPY.customLabel} placeholder={COPY.customPlaceholder}
+                  disabled={!editable} value={inputValue}
+                  onInput={(event) => setInputValue(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addShelf(inputValue);
+                    }
+                  }} />
+                <s-stack direction="inline" gap="small">
+                  <s-button disabled={!editable || !inputValue.trim()}
+                    onClick={() => addShelf(inputValue)}>{COPY.add}</s-button>
+                  <s-button variant="tertiary" disabled={!editable}
+                    onClick={() => {setCustom(false); setInputValue(""); setMessage(null);}}>
+                    {COPY.back}
+                  </s-button>
+                </s-stack>
+              </s-stack>
+            ) : null}
 
-          <s-button disabled={saving} onClick={load}>
-            {COPY.reload}
-          </s-button>
-        </s-stack>
+            {mode === "remove" ? (
+              shelves.length ? (
+                <s-select label={COPY.pickToRemove} placeholder={COPY.placeholder}
+                  disabled={!editable} value={selectedShelf}
+                  onChange={(event) => removeShelf(event.currentTarget.value)}>
+                  {shelves.map((name) => (
+                    <s-option key={name} value={name}>{name}</s-option>
+                  ))}
+                </s-select>
+              ) : <s-text tone="subdued">{COPY.noShelvesToRemove}</s-text>
+            ) : null}
+
+            <s-stack direction="inline" gap="small">
+              <s-button variant="primary" loading={saving}
+                disabled={!editable || !isDirty} onClick={save}>
+                {saving ? COPY.saving : COPY.save}
+              </s-button>
+              <s-button disabled={!editable} onClick={cancel}>{COPY.cancel}</s-button>
+            </s-stack>
+          </>
+        )}
       </s-stack>
     </s-admin-block>
   );
 }
-
-/* ============================================================
-   END: DL BUTIKSHYLLA – UI
-   ============================================================ */
+// END: DL BUTIKSHYLLA – KOMPAKT ADMIN-BLOCK
