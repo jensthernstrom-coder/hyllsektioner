@@ -1,63 +1,72 @@
-# Hyllsektioner
+# Hyllsektioner – butiksspecifik testgren
 
-Shopify-hostad Admin UI Extension för att läsa och redigera en produkts hyllplacering direkt i Shopify Admin.
+Shopify-hostad Admin UI Extension för att visa och manuellt redigera hyllplaceringar per butik på en produkt. Denna gren följer dataförslaget från Inventering v61, men är INTE releasad.
 
-## Arkitektur (DL Guldstandard)
+## Separera test och produktion
 
-- Ingen extern server, Netlify, databas eller kundvy behövs.
-- Shopify är datakälla. Tre befintliga metafält används utan migration.
-- Gränssnitt: extensions/butikshylla-block/src/BlockExtension.jsx
-- Domänregler: extensions/butikshylla-block/src/shelf-model.js
-- Shopify-anrop: extensions/butikshylla-block/src/shelf-api.js
-- Hyllförslag: extensions/butikshylla-block/src/shelves.js (synkas manuellt mot Inventeringsappen).
-- Behörighet: endast write_products. Direkt GraphQL Admin API i extensionen.
+- Aktiv Inventering är fortfarande v57; v61 är bara sparad och oaktiverad.
+- Detta gäller endast GitHub-grenen feature/store-specific-shelves-2026-10 och draft-PR #2.
+- Kör inga skrivtester mot skarpa produkter. Inventering-"Testläge" är inte en sandbox.
+- Ändra inte Order Printers skarpa mall innan två butiker och riktiga utskrifter har kontrollerats.
+- PR #2 bygger på PR #1 (improve/dl-guldstandard-2026-10). Granska i ordning.
 
-## Metafält (ändra inte nycklar)
+## Delat kontrakt: sex butiksspecifika produktmetafält
 
-- custom.butikshylla (single_line_text_field) – äldre läsbar representation.
-- custom.butikshylla_sektioner (list.single_line_text_field) – master för flera hyllor.
-- custom.butikshylla_uppdaterad (date_time) – tidsstämpel när hyllor sparades.
+Namespace custom, ägare Shopify Product (alla varianter delar placering).
 
-## Kompakt produktblock
+| Butik | Läsbar text (single_line_text_field) | Masterlista (list.single_line_text_field) | Tid (date_time) |
+| --- | --- | --- | --- |
+| Sveavägen | butikshylla_sveavagen | butikshylla_sveavagen_sektioner | butikshylla_sveavagen_uppdaterad |
+| Kungsholmen | butikshylla_kungsholmen | butikshylla_kungsholmen_sektioner | butikshylla_kungsholmen_uppdaterad |
 
-Shopify begränsar produktblockets höjd till 300px och infogar annars Visa mer.
-Därför visas normalt endast upp till två hyllor och +N till tillsammans med Redigera.
-Redigering har ett fält i taget: lägg till befintlig hylla, skapa ny eller ta bort en hylla.
-Alla hyllor, även de som inte får plats i sammanfattningen, kan tas bort via väljaren.
-Ändringar sparas först vid Spara och kan kastas med Avbryt.
+- Masterlistan är en JSON-lista, exempelvis ["Familjespel","Nyheter"].
+- Hyllnamn trimmas, upprepade vanliga blanksteg normaliseras, dubbletter avlägsnas med sv-SE och namn sorteras med svensk kollation.
+- Läsbar text har max 255 tecken; " m.fl." används när texten kortas. Hela strukturerade listan sparas alltid.
+- Tider sparas i UTC utan millisekunder och formateras i Europe/Stockholm i den läsbara texten.
+- Saknad masterlista = inte registrerad. Sparad [] = avsiktligt tömd.
+- Tömning skriver tre fält med metafieldsSet och CAS: [], läsbar text "Ingen hyllplacering registrerad (uppdaterad …)" och datum. Aldrig metafieldsDelete.
+- Legacy: custom.butikshylla, custom.butikshylla_sektioner och custom.butikshylla_uppdaterad läses separat som "Äldre placering, butik okänd". Aldrig fallback eller skrivmål.
+- Föreslagna hyllnamn finns ännu i src/shelves.js (manuellt synkad gammal lista). Kontrollera mot Inventerings sektioner per butik före release.
 
-## Driftsäkerhet
+## Butikskoppling
 
-- En befintlig tom masterlista migreras inte från en gammal text.
-- Felaktig JSON blockerar redigering i stället för att kasta bort data.
-- Hyllnamn normaliseras, dubbletter stoppas, maxlängden valideras.
-- Alla tre fälten sparas atomärt med metafieldsSet och compareDigest.
-- Borttagning görs med ett metafieldsDelete-anrop för tre fält; föregås av konfliktkontroll.
-- OBS: metafieldsDelete har inget compareDigest. Ett kort racefönster mellan kontroll och borttagning återstår.
-- Begäranden till äldre produktvy får inte skriva över nyare skärmläge.
-- Om produkten inte kunde läsas är redigering avstängd.
-- 'Läs om' kräver bekräftelse om det finns osparade ändringar.
+Merchant-owned Shopify-metaobjekt av typ sidekick_shelf_store:
+location_gid, store_key, display_name.
+store_key är exakt sveavagen eller kungsholmen. Inget active-fält.
+Endast konfigurerade butiker visas i blocket. Kopplingen hämtas på nytt före varje sparning.
+Pickup-location för Sveavägen är omappad tills ett verksamhetsbeslut fattats.
 
-## Test och release
+Den här grenen skapar inga metaobjekt, metafältsdefinitioner eller produktvärden.
+Behörigheter i shopify.app.toml: read_products, write_products, read_metaobjects.
+Scope-ändring kräver Shopify-installations- och behörighetskontroll i isolerad testmiljö.
 
-1. Kör `npm install` från projektroten med Node 22 eller senare. Rotprojektet har en npm-workspace som installerar extensionens beroenden.
-2. Kör `npm run check:extension` och `npm test` före `shopify app dev`.
-3. Om Shopify CLI säger `Type reference for admin.product-details.block.render could not be found` saknas sannolikt installerade extension-beroenden. Upprepa `npm install` i roten och kontrollera med `npm run check:extension`.
-4. Lägg till `package-lock.json` i Git när npm har genererat den för att låsa exakta dependencies.
-5. Kör shopify app dev i utvecklingsbutiken. Kontrollera Shopify-blocket manuellt.
-6. Prova äldre text, flera hyllor, tom produkt, sparande, borttagning, konflikt och om-läsning.
-7. Kör shopify app deploy --no-release. Kontrollera den skapade versionen.
-8. Först efter godkänd kontroll: släpp versionen via Shopify Dev Dashboard eller CLI.
+## UI och säkerhet
 
-Shopify CLI krävs lokalt för dev/deploy. Denna repo-version innehåller inga inloggningsuppgifter.
+- Kompakt produktblock: butiksväljare, högst två synliga hyllor och datum.
+- Redigera: Lägg till eller Ta bort, med utkast och Spara/Avbryt.
+- Butiksbyte blockeras om det finns osparade ändringar.
+- Manuell tömning kräver separat bekräftelse, därefter Spara.
+- Alla tre fälten för vald butik skrivs atomärt med compareDigest.
+- Konflikt, ogiltig butikskoppling, saknat Shopify-svar eller avvikande skrivsvar är fel.
+- Inga automatiska omförsök med blind överskrivning.
 
-## Appadress
+## Order Printer – ingen förändring än
 
-Appen är extension-only och använder Shopifys officiella standardadress i shopify.app.toml i stället för example.com.
-Huvudfunktionen är blocket 'Butikshylla' på en produktsida; det kräver ingen separat App Home-server.
+Ni använder Shopifys inbyggda plocklista med egen metafältskolumn.
+Första testet blir att lägga till custom.butikshylla_sveavagen eller custom.butikshylla_kungsholmen.
+Verifiera om den inbyggda plocklistan kan byta kolumn efter utskriftsplats.
+Urval av ordrar per location innebär inte automatiskt att fältkolumnen växlar.
+Om så inte sker behövs ett explicit mall-/kolumnval för respektive butik.
 
-## Built for Shopify
+## Tester som återstår
 
-Koden följer flera tekniska principer (inbyggt admin-UI, GraphQL, färre scopes, lättviktig drift).
-Detta är en intern/custom-distribution-app och kan inte som sådan garanteras Built for Shopify-badge.
-En publik App Store-app skulle kräva en annan distributions-/App Home-lösning och Shopify-granskning.
+1. npm install (Node 22+) i roten, npm run check:extension och npm test.
+2. Kör shopify app dev mot testbutik med uppdaterade scopes. Kontrollera att metaobjekt kan läsas och Admin 300px-gränsen respekteras.
+3. Testa två butiker på testprodukter: samma produkt i båda, saknat vs [], extern CAS-konflikt och manuell tömning.
+4. Verifiera att äldre text aldrig används som butiksspecifik hylla.
+5. Testa Order Printer-utskrift från vardera butik och att ingen felaktig butik visas.
+6. Granska Inventering v61-källkoden. Handoff rapporterar risk för förlorade baseline-/completed-uppdateringar med samtidiga enheter, sen baseline och falsk adoption efter omläsning.
+7. Testa Inventering v61:s omgångs- och synkflöden på särskilda testprodukter.
+8. Godkänn gemensam releaseplan med rollback för kod och produktdata.
+
+Detta är INTE en produktionsrelease. Blanda inte skarpa skrivningar från v57 och den nya modellen.
