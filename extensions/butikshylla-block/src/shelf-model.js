@@ -94,4 +94,14 @@ export function formatDateTime(value) {
     timeStyle: "short",
   }).format(date);
 }
+// Kort sammanfattning för Shopifys 300px-begränsade produktblock.
+// Fullständig lista finns alltid kvar i det redigerbara fältet.
+export function summarizeShelves(shelves, visibleCount = 2) {
+  const count = Math.max(0, Math.floor(Number(visibleCount) || 0));
+  return {
+    visible: shelves.slice(0, count),
+    remaining: Math.max(0, shelves.length - count),
+  };
+}
+
 // END: DL BUTIKSHYLLA - DATAREGLER
