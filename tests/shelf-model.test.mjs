@@ -14,6 +14,26 @@ test("tar bort dubbletter med svensk skiftlägesjämförelse", () => {
 test("tolkar äldre läsbart metafält", () => {
   assert.deepEqual(parseLegacyReadableShelf("Familjespel, Strategi; Pussel"), ["Familjespel", "Strategi", "Pussel"]);
 });
+test("delar äldre hylltext med lodstreck och tar bort datumetiketten", () => {
+  assert.deepEqual(
+    parseLegacyReadableShelf("Lättare Strategi | Familjespel (uppdaterad 2026-09-01 15:20)"),
+    ["Lättare Strategi", "Familjespel"],
+  );
+  assert.deepEqual(
+    parseLegacyReadableShelf("Utmärkta spel| Tyngre Strategi |SciFi & Fantasy (uppdaterad 2026-09-01 15:32)"),
+    ["Utmärkta spel", "Tyngre Strategi", "SciFi & Fantasy"],
+  );
+});
+
+test("läser flera gamla hyllor när det strukturerade metafältet saknas", () => {
+  const state = readShelfState({
+    shelfSections: null,
+    readableShelf: {value: "Lättare Strategi | Familjespel (uppdaterad 2026-09-01 15:20)"},
+  });
+  assert.deepEqual(state.shelves, ["Lättare Strategi", "Familjespel"]);
+  assert.equal(state.legacyFallback, true);
+});
+
 test("en lagrad tom lista får aldrig migreras från en äldre text", () => {
   const state = readShelfState({
     shelfSections: {value:"[]", compareDigest:"abc"},
