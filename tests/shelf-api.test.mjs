@@ -1,78 +1,119 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  loadProductShelves, saveProductShelves, removeProductShelves, CONFLICT_MESSAGE,
-  GET_PRODUCT_SHELVES, SET_METAFIELDS, DELETE_METAFIELDS,
+  CONFLICT_MESSAGE, GET_PRODUCT_SHELVES, GET_STORES, SET_METAFIELDS,
+  loadShelfBundle, loadStoreConfig, saveStoreShelves,
 } from "../extensions/butikshylla-block/src/shelf-api.js";
 
 const productId = "gid://shopify/Product/123";
-const snapshot = {sections:"section-hash",readable:"readable-hash",updated:"updated-hash"};
-const existing = {
-  shelfSections:{value:'["Familjespel"]',compareDigest:snapshot.sections},
-  readableShelf:{value:"Familjespel",compareDigest:snapshot.readable},
-  shelfUpdated:{value:"2026-10-01T00:00:00Z",compareDigest:snapshot.updated},
+const store = {key:"sveavagen",locationGid:"gid://shopify/Location/1",displayName:"Sveavägen"};
+const existingDigests = {sections:"a",readable:"b",updated:"c"};
+const config = {nodes:[{fields:[
+  {key:"store_key",value:"sveavagen"},
+  {key:"location_gid",value:"gid://shopify/Location/1"},
+  {key:"display_name",value:"Sveavägen"},
+]}],pageInfo:{hasNextPage:false}};
+const existingProduct = {
+  sveavagenSections:{value:'["Familjespel"]',compareDigest:"a"},
+  sveavagenReadable:{value:"Familjespel",compareDigest:"b"},
+  sveavagenUpdated:{value:"2026-10-08T14:44:00Z",compareDigest:"c"},
+  kungsholmenSections:{value:'["Bakre lagret"]',compareDigest:"kh-list"},
+  kungsholmenReadable:{value:"Bakre lagret",compareDigest:"kh-text"},
+  kungsholmenUpdated:{value:"2026-10-08T10:00:00Z",compareDigest:"kh-date"},
+  legacyReadable:{value:"Äldre hylla, butik okänd"},
 };
 
-test("läsning gör ett produktanrop",async()=>{
-  const query=async (document,options)=>{
+test("läser två butiker och visar legacy separat utan fallback", async () => {
+  const query = async (document, options) => {
+    if (document === GET_STORES) return {data:{metaobjects:config}};
     assert.equal(document,GET_PRODUCT_SHELVES);
     assert.equal(options.variables.id,productId);
-    return {data:{product:existing}};
+    return {data:{product:existingProduct}};
   };
-  const state=await loadProductShelves(query,productId);
-  assert.deepEqual(state.shelves,["Familjespel"]);
-  assert.deepEqual(state.digests,snapshot);
+  const result = await loadShelfBundle(query, productId);
+  assert.equal(result.stores.length,1);
+  assert.deepEqual(result.states.sveavagen.shelves,["Familjespel"]);
+  assert.deepEqual(result.states.kungsholmen.shelves,["Bakre lagret"]);
+  assert.equal(result.legacy.readable,"Äldre hylla, butik okänd");
 });
 
-test("sparar tre fält atomärt med compareDigest",async()=>{
-  let calls=0;
-  const query=async (document,options)=>{
-    calls++;
+test("sparar vald butiks tre fält med CAS, aldrig den andra butikens eller legacy", async () => {
+  let calls = [];
+  const query = async (document, options) => {
+    calls.push(document);
+    if (document === GET_STORES) return {data:{metaobjects:config}};
     assert.equal(document,SET_METAFIELDS);
-    const fields=options.variables.metafields;
+    const fields = options.variables.metafields;
     assert.equal(fields.length,3);
-    assert.equal(fields[0].compareDigest,"section-hash");
-    assert.equal(fields[1].compareDigest,"readable-hash");
-    assert.equal(fields[2].compareDigest,"updated-hash");
-    assert.equal(fields[0].value,'["Familjespel","Strategi"]');
-    return {data:{metafieldsSet:{metafields:fields.map((field,i)=>({
-      key:field.key, compareDigest:"new-"+i
+    assert.deepEqual(fields.map((field) => field.key), [
+      "butikshylla_sveavagen_sektioner",
+      "butikshylla_sveavagen",
+      "butikshylla_sveavagen_uppdaterad",
+    ]);
+    assert.deepEqual(fields.map((field) => field.compareDigest), ["a","b","c"]);
+    assert.equal(fields[0].value,'["Familjespel","Nyheter"]');
+    return {data:{metafieldsSet:{metafields:fields.map((field,i) => ({
+      key:field.key,namespace:field.namespace,value:field.value,compareDigest:"new"+i,
     })),userErrors:[]}}};
   };
-  const result=await saveProductShelves(query,productId,["Familjespel","Strategi"],snapshot);
-  assert.equal(calls,1);
-  assert.deepEqual(result.digests,{sections:"new-0",readable:"new-1",updated:"new-2"});
+  const result = await saveStoreShelves(query,productId,store,
+    ["Nyheter","Familjespel"],existingDigests);
+  assert.deepEqual(calls,[GET_STORES,SET_METAFIELDS]);
+  assert.deepEqual(result.shelves,["Familjespel","Nyheter"]);
+  assert.deepEqual(result.digests,{sections:"new0",readable:"new1",updated:"new2"});
 });
 
-test("CAS-konflikt ger mänskligt felmeddelande",async()=>{
-  const query=async()=>({data:{metafieldsSet:{metafields:[],
-    userErrors:[{code:"STALE_OBJECT",message:"compareDigest did not match"}]}}});
-  await assert.rejects(()=>saveProductShelves(query,productId,["Familjespel"],snapshot),
-    (error)=>error.message===CONFLICT_MESSAGE);
-});
-
-test("tar bort alla tre fält med ett delete-anrop efter konfliktkontroll",async()=>{
-  const calls=[];
-  const query=async (document,options)=>{
-    calls.push(document);
-    if(document===GET_PRODUCT_SHELVES) return {data:{product:existing}};
-    assert.equal(document,DELETE_METAFIELDS);
-    assert.equal(options.variables.metafields.length,3);
-    return {data:{metafieldsDelete:{deletedMetafields:[],userErrors:[]}}};
+test("uttrycklig tömning skriver [] och behåller datum och en läsbar text", async () => {
+  const query = async (doc, args) => {
+    if (doc === GET_STORES) return {data:{metaobjects:config}};
+    const fields = args.variables.metafields;
+    assert.equal(fields[0].value,"[]");
+    assert.match(fields[1].value,/^Ingen hyllplacering registrerad \(uppdaterad /);
+    assert.match(fields[2].value,/Z$/);
+    return {data:{metafieldsSet:{metafields:fields.map((f,i)=>({
+      key:f.key,namespace:"custom",value:f.value,compareDigest:"updated"+i,
+    })),userErrors:[]}}};
   };
-  const result=await removeProductShelves(query,productId,snapshot);
-  assert.deepEqual(calls,[GET_PRODUCT_SHELVES,DELETE_METAFIELDS]);
-  assert.equal(result.updatedAt,"");
+  const result = await saveStoreShelves(query,productId,store,[],existingDigests);
+  assert.deepEqual(result.shelves,[]);
+  assert.equal(result.present,true);
 });
 
-test("tar inte bort om någon annan hunnit uppdatera produkten",async()=>{
-  const query=async()=>({data:{product:existing}});
-  await assert.rejects(()=>removeProductShelves(query,productId,{
-    ...snapshot,sections:"old-digest",
-  }), (error)=>error.message===CONFLICT_MESSAGE);
+test("omappad eller ändrad butik stoppar skrivning innan mutation",async () => {
+  const query = async (doc) => {
+    assert.equal(doc,GET_STORES);
+    return {data:{metaobjects:{nodes:[],pageInfo:{hasNextPage:false}}}};
+  };
+  await assert.rejects(() => saveStoreShelves(query,productId,store,
+    ["Nyheter"],existingDigests), /Butikskopplingen har ändrats/);
 });
 
-test("GraphQL-fel får inte bli en falsk sparbekräftelse",async()=>{
-  const query=async()=>({errors:[{message:"Unauthorized"}]});
-  await assert.rejects(()=>saveProductShelves(query,productId,["Familjespel"],snapshot),/Unauthorized/);
+test("CAS-konflikt stoppar utan falskt lyckat resultat",async () => {
+  const query = async (doc) => {
+    if (doc === GET_STORES) return {data:{metaobjects:config}};
+    return {data:{metafieldsSet:{metafields:[],
+      userErrors:[{code:"STALE_OBJECT",message:"Stale compareDigest"}]}}};
+  };
+  await assert.rejects(() => saveStoreShelves(query,productId,store,
+    ["Nyheter"],existingDigests), (error) => error.message === CONFLICT_MESSAGE);
+});
+
+test("extern textändring i mutationens svar får inte adopteras",async () => {
+  const query = async (doc,args) => {
+    if (doc === GET_STORES) return {data:{metaobjects:config}};
+    const fields = args.variables.metafields;
+    return {data:{metafieldsSet:{metafields:fields.map((f,i) => ({
+      key:f.key,namespace:"custom",
+      value:i === 1 ? "Helt annan text" : f.value,
+      compareDigest:"new"+i,
+    })),userErrors:[]}}};
+  };
+  await assert.rejects(() => saveStoreShelves(query,productId,store,
+    ["Nyheter"],existingDigests), /avviker från sparningen/);
+});
+
+test("GraphQL-fel stoppar både butiksläsning och produktsparning",async () => {
+  await assert.rejects(() => loadStoreConfig(async () => ({
+    errors:[{message:"Forbidden"}],
+  })), /Forbidden/);
 });
