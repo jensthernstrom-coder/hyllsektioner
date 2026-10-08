@@ -32,11 +32,14 @@ Shopify-hostad Admin UI Extension för att läsa och redigera en produkts hyllpl
 
 ## Test och release
 
-1. Kör npm test från projektroten med Node 22 eller senare.
-2. Kör shopify app dev i utvecklingsbutiken. Kontrollera Shopify-blocket manuellt.
-3. Prova äldre text, flera hyllor, tom produkt, sparande, borttagning, konflikt och om-läsning.
-4. Kör shopify app deploy --no-release. Kontrollera den skapade versionen.
-5. Först efter godkänd kontroll: släpp versionen via Shopify Dev Dashboard eller CLI.
+1. Kör `npm install` från projektroten med Node 22 eller senare. Rotprojektet har en npm-workspace som installerar extensionens beroenden.
+2. Kör `npm run check:extension` och `npm test` före `shopify app dev`.
+3. Om Shopify CLI säger `Type reference for admin.product-details.block.render could not be found` saknas sannolikt installerade extension-beroenden. Upprepa `npm install` i roten och kontrollera med `npm run check:extension`.
+4. Lägg till `package-lock.json` i Git när npm har genererat den för att låsa exakta dependencies.
+5. Kör shopify app dev i utvecklingsbutiken. Kontrollera Shopify-blocket manuellt.
+6. Prova äldre text, flera hyllor, tom produkt, sparande, borttagning, konflikt och om-läsning.
+7. Kör shopify app deploy --no-release. Kontrollera den skapade versionen.
+8. Först efter godkänd kontroll: släpp versionen via Shopify Dev Dashboard eller CLI.
 
 Shopify CLI krävs lokalt för dev/deploy. Denna repo-version innehåller inga inloggningsuppgifter.
 

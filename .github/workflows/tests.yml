@@ -12,5 +12,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Installera dependencies för hela appen
+        run: npm install --no-audit --no-fund
+      - name: Kontrollera att Shopify UI Extensions finns
+        run: npm run check:extension
       - name: Testa datamodell och Shopify-anrop
         run: npm test
