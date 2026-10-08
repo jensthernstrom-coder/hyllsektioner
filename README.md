@@ -18,7 +18,15 @@ Shopify-hostad Admin UI Extension för att läsa och redigera en produkts hyllpl
 - custom.butikshylla_sektioner (list.single_line_text_field) – master för flera hyllor.
 - custom.butikshylla_uppdaterad (date_time) – tidsstämpel när hyllor sparades.
 
-## Kompakt produktblock\n\nShopify begränsar produktblockets höjd till 300px och infogar annars Visa mer.\nDärför visas normalt endast upp till två hyllor och +N till tillsammans med Redigera.\nRedigering har ett fält i taget: lägg till befintlig hylla, skapa ny eller ta bort en hylla.\nAlla hyllor, även de som inte får plats i sammanfattningen, kan tas bort via väljaren.\nÄndringar sparas först vid Spara och kan kastas med Avbryt.\n\n## Driftsäkerhet
+## Kompakt produktblock
+
+Shopify begränsar produktblockets höjd till 300px och infogar annars Visa mer.
+Därför visas normalt endast upp till två hyllor och +N till tillsammans med Redigera.
+Redigering har ett fält i taget: lägg till befintlig hylla, skapa ny eller ta bort en hylla.
+Alla hyllor, även de som inte får plats i sammanfattningen, kan tas bort via väljaren.
+Ändringar sparas först vid Spara och kan kastas med Avbryt.
+
+## Driftsäkerhet
 
 - En befintlig tom masterlista migreras inte från en gammal text.
 - Felaktig JSON blockerar redigering i stället för att kasta bort data.
