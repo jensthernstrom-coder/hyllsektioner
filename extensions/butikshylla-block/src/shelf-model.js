@@ -40,7 +40,8 @@ export function parseSectionList(value) {
 
 export function parseLegacyReadableShelf(value) {
   if (!value) return [];
-  return uniqueShelves(String(value).split(/[,;\n]|\s+\/\s+/));
+  // Inventeringsappens äldre textfält skiljer hyllor med " | ".
+  return uniqueShelves(String(value).split(/[,;|\n]|\s+\/\s+/));
 }
 
 export function readShelfState(product) {
