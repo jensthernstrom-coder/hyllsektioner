@@ -56,11 +56,11 @@ test("läsbar text visar datum, håller 255 tecken och skyddar full lista", () =
     "Nyheter | Strategi (uppdaterad 2026-10-08 16:44)");
   assert.equal(formatReadable([], time),
     "Ingen hyllplacering registrerad (uppdaterad 2026-10-08 16:44)");
-  const names = Array.from({length:20}, (_,i) => "Hylla " + String(i).padStart(2,"0"));
+  const names = Array.from({length:30}, (_,i) => "Hylla " + String(i).padStart(2,"0"));
   const readable = formatReadable(names,time);
   assert.ok(readable.length <= 255);
   assert.match(readable,/ m.fl. \(uppdaterad/);
-  assert.equal(uniqueShelves(names).length,20);
+  assert.equal(uniqueShelves(names).length,30);
 });
 
 function config(items) {
