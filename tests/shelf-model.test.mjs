@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeShelfName, uniqueShelves, parseSectionList, parseLegacyReadableShelf,
-  readShelfState, digestsMatch, validateShelfName,
+  readShelfState, digestsMatch, validateShelfName, summarizeShelves,
 } from "../extensions/butikshylla-block/src/shelf-model.js";
 
 test("normaliserar och tar bort gamla datumetiketter", () => {
@@ -42,4 +42,13 @@ test("samtliga digest-fält måste matcha", () => {
     {sections:null,readable:"a",updated:"b"}),true);
   assert.equal(digestsMatch({sections:"a",readable:"b",updated:"c"},
     {sections:"x",readable:"b",updated:"c"}),false);
+});
+
+test("kompakt hyllsammanfattning visar högst två hyllor och döljer inte data", () => {
+  const original = ["Familjespel", "Utmärkta spel", "Strategi", "Pussel"];
+  assert.deepEqual(summarizeShelves(original), {
+    visible: ["Familjespel", "Utmärkta spel"], remaining: 2,
+  });
+  assert.deepEqual(summarizeShelves([]), {visible: [], remaining: 0});
+  assert.deepEqual(original, ["Familjespel", "Utmärkta spel", "Strategi", "Pussel"]);
 });
