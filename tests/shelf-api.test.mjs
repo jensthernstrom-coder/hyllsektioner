@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  CONFLICT_MESSAGE, GET_PRODUCT_SHELVES, GET_STORES, SET_METAFIELDS,
-  loadShelfBundle, loadStoreConfig, saveStoreShelves,
+  CONFLICT_MESSAGE, GET_PRODUCT_SHELVES, GET_SECTIONS, GET_STORES, SET_METAFIELDS,
+  loadShelfBundle, loadSectionRegistry, loadStoreConfig, saveStoreShelves,
 } from "../extensions/butikshylla-block/src/shelf-api.js";
 
 const productId = "gid://shopify/Product/123";
@@ -13,6 +13,18 @@ const config = {nodes:[{fields:[
   {key:"location_gid",value:"gid://shopify/Location/1"},
   {key:"display_name",value:"Sveavägen"},
 ]}],pageInfo:{hasNextPage:false}};
+const sections = {nodes:[
+  {id:"gid://shopify/Metaobject/11",fields:[
+    {key:"name",value:"Familjespel"},
+    {key:"location_gid",value:"gid://shopify/Location/1"},
+    {key:"area",value:"I butiken"},
+    {key:"position",value:"3"},
+  ]},
+  {id:"gid://shopify/Metaobject/12",fields:[
+    {key:"name",value:"Kungsholmens hylla"},
+    {key:"location_gid",value:"gid://shopify/Location/2"},
+  ]},
+],pageInfo:{hasNextPage:false,endCursor:null}};
 const existingProduct = {
   sveavagenSections:{value:'["Familjespel"]',compareDigest:"a"},
   sveavagenReadable:{value:"Familjespel",compareDigest:"b"},
@@ -26,12 +38,14 @@ const existingProduct = {
 test("läser två butiker och visar legacy separat utan fallback", async () => {
   const query = async (document, options) => {
     if (document === GET_STORES) return {data:{metaobjects:config}};
+    if (document === GET_SECTIONS) return {data:{metaobjects:sections}};
     assert.equal(document,GET_PRODUCT_SHELVES);
     assert.equal(options.variables.id,productId);
     return {data:{product:existingProduct}};
   };
   const result = await loadShelfBundle(query, productId);
   assert.equal(result.stores.length,1);
+  assert.deepEqual(result.sectionsByStore.sveavagen.map(s => s.name), ["Familjespel"]);
   assert.deepEqual(result.states.sveavagen.shelves,["Familjespel"]);
   assert.deepEqual(result.states.kungsholmen.shelves,["Bakre lagret"]);
   assert.equal(result.legacy.readable,"Äldre hylla, butik okänd");
@@ -116,4 +130,33 @@ test("GraphQL-fel stoppar både butiksläsning och produktsparning",async () => 
   await assert.rejects(() => loadStoreConfig(async () => ({
     errors:[{message:"Forbidden"}],
   })), /Forbidden/);
+});
+
+test("hämtar alla sektionssidor och filtrerar bort den andra butikens hyllor",async () => {
+  let calls = 0;
+  const query = async (document, options) => {
+    assert.equal(document, GET_SECTIONS);
+    calls++;
+    if (!options?.variables?.after) {
+      return {data:{metaobjects:{
+        nodes:[sections.nodes[1]],
+        pageInfo:{hasNextPage:true,endCursor:"cursor-1"},
+      }}};
+    }
+    assert.equal(options.variables.after,"cursor-1");
+    return {data:{metaobjects:{
+      nodes:[sections.nodes[0]],
+      pageInfo:{hasNextPage:false,endCursor:"cursor-2"},
+    }}};
+  };
+  const parsed = await loadSectionRegistry(query, [store]);
+  assert.equal(calls,2);
+  assert.deepEqual(parsed.sveavagen.map(section => section.id),
+    ["gid://shopify/Metaobject/11"]);
+});
+
+test("saknad fortsättningsmarkör stoppar ofullständigt sektionsregister",async () => {
+  await assert.rejects(() => loadSectionRegistry(async () => ({
+    data:{metaobjects:{nodes:[],pageInfo:{hasNextPage:true,endCursor:null}}},
+  }),[store]),/sidbläddring/);
 });
