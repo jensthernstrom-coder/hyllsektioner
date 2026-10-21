@@ -1,7 +1,6 @@
 import "@shopify/ui-extensions/preact";
 import {render} from "preact";
 import {useEffect, useRef, useState} from "preact/hooks";
-import {SHELF_SECTIONS} from "./shelves.js";
 import {
   formatStockholm, summarizeShelves, uniqueShelves, validateShelfName,
 } from "./shelf-model.js";
@@ -24,13 +23,10 @@ const COPY = {
   save: "Spara",
   saving: "Sparar…",
   placeholder: "Välj hylla",
-  custom: "Annan hylla",
-  input: "Nytt hyllnamn",
-  back: "Tillbaka",
   pending: "Osparade ändringar",
   doNotDiscard: "Spara eller avbryt ändringarna innan du byter butik.",
   doNotReload: "Avbryt dina ändringar innan du läser om.",
-  noMoreShelves: "Alla föreslagna hyllor är valda.",
+  noMoreShelves: "Inga fler sektioner att välja. Skapa nya i Inventering.",
   noShelvesToRemove: "Inga hyllor att ta bort.",
   clear: "Töm alla placeringar",
   confirmClear: "Bekräfta tömning",
@@ -61,8 +57,7 @@ function ShelfBlock() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState([]);
   const [mode, setMode] = useState("add");
-  const [custom, setCustom] = useState(false);
-  const [inputValue, setInputValue] = useState("");
+  const [selectedShelf, setSelectedShelf] = useState("");
   const [clearConfirm, setClearConfirm] = useState(false);
   const [message, setMessage] = useState(null);
 
@@ -74,7 +69,7 @@ function ShelfBlock() {
   const visibleShelves = editing ? draft : initial;
   const summary = summarizeShelves(visibleShelves);
   const used = new Set(draft.map((name) => name.toLocaleLowerCase("sv-SE")));
-  const available = SHELF_SECTIONS.filter((section) =>
+  const available = (bundle?.sectionsByStore?.[storeKey] || []).filter((section) =>
     !used.has(section.name.toLocaleLowerCase("sv-SE"))
   );
 
@@ -87,8 +82,7 @@ function ShelfBlock() {
     setEditing(false);
     setDraft([]);
     setMode("add");
-    setCustom(false);
-    setInputValue("");
+    setSelectedShelf("");
     setClearConfirm(false);
   }
 
@@ -104,7 +98,8 @@ function ShelfBlock() {
       const next = await loadShelfBundle(queryShopify, id);
       if (request !== requestId.current || currentProduct.current !== id) return;
       setBundle(next);
-      setStoreKey(next.stores[0]?.key || "");
+      setStoreKey(next.stores.find((entry) => entry.key === "sveavagen")?.key ||
+        next.stores[0]?.key || "");
     } catch (error) {
       if (request !== requestId.current || currentProduct.current !== id) return;
       console.error("[DL Hyllsektioner] load", error);
@@ -135,16 +130,17 @@ function ShelfBlock() {
 
   function switchMode(next) {
     setMode(next);
-    setCustom(false);
-    setInputValue("");
+    setSelectedShelf("");
     setClearConfirm(false);
     setMessage(null);
   }
 
-  function addShelf(value) {
+  function addShelf(sectionId) {
     if (!editable || !editing) return;
+    const section = available.find((item) => item.id === sectionId);
+    if (!section) return; // Endast Inventeringsappens sektionsregister är valbart.
     try {
-      const newName = validateShelfName(value);
+      const newName = validateShelfName(section.name);
       if (draft.some((item) =>
         item.toLocaleLowerCase("sv-SE") === newName.toLocaleLowerCase("sv-SE")
       )) {
@@ -152,8 +148,7 @@ function ShelfBlock() {
         return;
       }
       setDraft(uniqueShelves([...draft, newName]));
-      setCustom(false);
-      setInputValue("");
+      setSelectedShelf("");
       setClearConfirm(false);
       setMessage(null);
     } catch (error) {
@@ -230,13 +225,13 @@ function ShelfBlock() {
         {message ? <s-banner tone={message.tone} heading={message.text} /> : null}
 
         {bundle.stores.length ? (
-          <s-select label={COPY.selectStore} value={storeKey}
-            disabled={saving || (editing && isDirty)}
-            onChange={(event) => selectStore(event.currentTarget.value)}>
+          <s-stack direction="inline" gap="small" alignItems="center">
             {bundle.stores.map((item) => (
-              <s-option key={item.key} value={item.key}>{item.displayName}</s-option>
+              <s-button key={item.key} variant={storeKey === item.key ? "primary" : "tertiary"}
+                disabled={saving || (editing && isDirty)}
+                onClick={() => selectStore(item.key)}>{item.displayName}</s-button>
             ))}
-          </s-select>
+          </s-stack>
         ) : <s-text tone="critical">{COPY.missingConfig}</s-text>}
 
         {store ? (
@@ -263,35 +258,18 @@ function ShelfBlock() {
                     disabled={!editable} onClick={() => switchMode("remove")}>Ta bort</s-button>
                   {isDirty ? <s-text tone="subdued">{COPY.pending}</s-text> : null}
                 </s-stack>
-                {mode === "add" && !custom ? (
-                  <>
-                    {available.length ? (
-                      <s-select label="Välj hylla att lägga till" placeholder={COPY.placeholder}
-                        disabled={!editable} onChange={(event) =>
-                          addShelf(event.currentTarget.value)
-                        }>
-                        {available.map((item) => (
-                          <s-option key={item.name} value={item.name}>
-                            {item.name} ({item.area})
-                          </s-option>
-                        ))}
-                      </s-select>
-                    ) : <s-text tone="subdued">{COPY.noMoreShelves}</s-text>}
-                    <s-button variant="tertiary" disabled={!editable}
-                      onClick={() => setCustom(true)}>{COPY.custom}</s-button>
-                  </>
-                ) : null}
-                {mode === "add" && custom ? (
-                  <>
-                    <s-text-field label={COPY.input} value={inputValue} disabled={!editable}
-                      onInput={(event) => setInputValue(event.currentTarget.value)} />
-                    <s-stack direction="inline" gap="small">
-                      <s-button disabled={!editable || !inputValue.trim()}
-                        onClick={() => addShelf(inputValue)}>{COPY.add}</s-button>
-                      <s-button variant="tertiary" disabled={!editable}
-                        onClick={() => setCustom(false)}>{COPY.back}</s-button>
-                    </s-stack>
-                  </>
+                {mode === "add" ? (
+                  available.length ? (
+                    <s-select label="Välj hylla att lägga till" placeholder={COPY.placeholder}
+                      value={selectedShelf} disabled={!editable}
+                      onChange={(event) => addShelf(event.currentTarget.value)}>
+                      {available.map((item) => (
+                        <s-option key={item.id} value={item.id}>
+                          {item.name} ({item.area})
+                        </s-option>
+                      ))}
+                    </s-select>
+                  ) : <s-text tone="subdued">{COPY.noMoreShelves}</s-text>
                 ) : null}
                 {mode === "remove" ? (
                   draft.length ? (
