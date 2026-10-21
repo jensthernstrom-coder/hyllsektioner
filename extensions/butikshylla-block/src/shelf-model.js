@@ -163,6 +163,44 @@ export function parseStoreConfig(connection) {
   return STORE_KEYS.filter((key) => byKey.has(key)).map((key) => byKey.get(key));
 }
 
+// Inventeringsappens metaobjekt är enda register över valbara hyllor.
+// Produktmetafälten innehåller däremot namn, inte dessa metaobjekt-ID.
+export function parseSectionRegistry(nodes, stores) {
+  if (!Array.isArray(nodes) || !Array.isArray(stores)) {
+    throw new Error("Sektionsregistret kunde inte läsas.");
+  }
+  const result = Object.fromEntries(stores.map((store) => [store.key, []]));
+  const storeByLocation = new Map(stores.map((store) => [store.locationGid, store.key]));
+  for (const node of nodes) {
+    const fields = Object.fromEntries((node.fields || []).map((f) => [f.key, f.value]));
+    const key = storeByLocation.get(fields.location_gid);
+    if (!key) continue; // Andra Shopify-platser ska inte visas.
+    const name = typeof fields.name === "string" ? fields.name.trim() : "";
+    if (!name || !node.id) continue;
+    const position = Number(fields.position);
+    result[key].push({
+      id: node.id,
+      name,
+      area: fields.area?.trim() || "I butiken",
+      position: Number.isInteger(position) ? position : 0,
+    });
+  }
+  for (const store of stores) {
+    const seen = new Set();
+    result[store.key] = result[store.key]
+      .sort((a, b) => a.area.localeCompare(b.area, "sv") ||
+        a.position - b.position || a.name.localeCompare(b.name, "sv"))
+      .filter((section) => {
+        // Två likadana namn på en plats kan inte särskiljas i produktmetafältet.
+        const id = section.name.toLocaleLowerCase("sv-SE");
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+  }
+  return result;
+}
+
 export function summarizeShelves(shelves, visibleCount = 2) {
   const count = Math.max(0, Math.floor(Number(visibleCount) || 0));
   return {visible: shelves.slice(0, count), remaining: Math.max(0, shelves.length - count)};
