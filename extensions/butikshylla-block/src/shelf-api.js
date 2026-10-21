@@ -1,7 +1,7 @@
 // START: DL HYLLSEKTIONER – SHOPIFY-DATA
 // Alla skrivningar gäller exakt en butik och tre produktfält med compareDigest.
 import {
-  STORE_FIELDS, formatReadable, parseStoreConfig, readLegacyState,
+  STORE_FIELDS, formatReadable, parseSectionRegistry, parseStoreConfig, readLegacyState,
   readStoreState, toUtcSecond, uniqueShelves,
 } from "./shelf-model.js";
 
@@ -26,10 +26,19 @@ export const GET_PRODUCT_SHELVES = [
 ].join("\n");
 
 export const GET_STORES = [
-  "query DlGetShelfStoreConfig {",
-  "  metaobjects(type: \"sidekick_shelf_store\", first: 100) {",
-  "    nodes { fields { key value } }",
-  "    pageInfo { hasNextPage }",
+  "query DlGetShelfStoreConfig($after: String) {",
+  "  metaobjects(type: \"sidekick_shelf_store\", first: 50, after: $after) {",
+  "    nodes { id fields { key value } }",
+  "    pageInfo { hasNextPage endCursor }",
+  "  }",
+  "}",
+].join("\n");
+
+export const GET_SECTIONS = [
+  "query DlGetShelfSectionRegistry($after: String) {",
+  "  metaobjects(type: \"sidekick_inv_section\", first: 250, after: $after) {",
+  "    nodes { id fields { key value } }",
+  "    pageInfo { hasNextPage endCursor }",
   "  }",
   "}",
 ].join("\n");
@@ -63,20 +72,49 @@ function operationOrThrow(result) {
   return operation;
 }
 
+async function readAllMetaobjects(query, document) {
+  const nodes = [];
+  const seenCursors = new Set();
+  let after = null;
+  // Fungerar även om registret växer över Shopifys sidgräns.
+  for (let page = 0; page < 100; page += 1) {
+    const connection = dataOrThrow(await query(document, {variables: {after}})).metaobjects;
+    if (!connection || !Array.isArray(connection.nodes) || !connection.pageInfo) {
+      throw new Error("Metaobjekten kunde inte läsas.");
+    }
+    nodes.push(...connection.nodes);
+    if (!connection.pageInfo.hasNextPage) return nodes;
+    const cursor = connection.pageInfo.endCursor;
+    if (!cursor || seenCursors.has(cursor)) {
+      throw new Error("Ogiltig sidbläddring i sektionsregistret.");
+    }
+    seenCursors.add(cursor);
+    after = cursor;
+  }
+  throw new Error("Sektionsregistret är för stort för att läsas fullständigt.");
+}
+
 export async function loadStoreConfig(query) {
-  const connection = dataOrThrow(await query(GET_STORES)).metaobjects;
-  return parseStoreConfig(connection);
+  const nodes = await readAllMetaobjects(query, GET_STORES);
+  return parseStoreConfig({nodes, pageInfo: {hasNextPage: false}});
+}
+
+export async function loadSectionRegistry(query, stores) {
+  const nodes = await readAllMetaobjects(query, GET_SECTIONS);
+  return parseSectionRegistry(nodes, stores);
 }
 
 export async function loadShelfBundle(query, productId) {
-  const [productResult, stores] = await Promise.all([
+  const [productResult, stores, sectionNodes] = await Promise.all([
     query(GET_PRODUCT_SHELVES, {variables: {id: productId}}),
     loadStoreConfig(query),
+    readAllMetaobjects(query, GET_SECTIONS),
   ]);
   const product = dataOrThrow(productResult).product;
   if (!product) throw new Error("Produkten kunde inte hittas.");
   return {
     stores,
+    sectionsByStore: parseSectionRegistry(sectionNodes, stores),
     legacy: readLegacyState(product),
     states: Object.fromEntries(Object.keys(STORE_FIELDS).map((key) =>
       [key, readStoreState(product, key)]
