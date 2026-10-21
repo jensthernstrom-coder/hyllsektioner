@@ -302,7 +302,8 @@ function ShelfBlock() {
             )}
           </>
         ) : null}
-        {!editing && bundle.legacy.readable ? (
+        {!editing && storeKey === "sveavagen" &&
+          !bundle.states.sveavagen.present && bundle.legacy.readable ? (
           <s-text tone="subdued">
             {COPY.legacy} {bundle.legacy.readable.length > 100 ?
               bundle.legacy.readable.slice(0, 100) + "…" : bundle.legacy.readable}
