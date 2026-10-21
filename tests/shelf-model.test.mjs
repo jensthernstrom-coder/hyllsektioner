@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   STORE_FIELDS, formatReadable, formatStockholm, normalizeShelfName, parseSectionList,
-  parseStoreConfig, readLegacyState, readStoreState, summarizeShelves, toUtcSecond,
+  parseSectionRegistry, parseStoreConfig, readLegacyState, readStoreState, summarizeShelves, toUtcSecond,
   uniqueShelves, validateShelfName,
 } from "../extensions/butikshylla-block/src/shelf-model.js";
 
@@ -94,4 +94,31 @@ test("läser butikskoppling utan hårdkodade location-ID", () => {
 test("enbart två synliga hyllor i det kompakta blocket", () => {
   assert.deepEqual(summarizeShelves(["Nyheter","Familjespel","Strategi"]),
     {visible:["Nyheter","Familjespel"],remaining:1});
+});
+
+test("Inventerings sektionsregister sorteras per plats, område och position", () => {
+  const stores = [
+    {key:"sveavagen",locationGid:"gid://shopify/Location/1"},
+    {key:"kungsholmen",locationGid:"gid://shopify/Location/2"},
+  ];
+  const section = (id, name, loc, area, position) => ({id, fields:[
+    {key:"name",value:name},
+    {key:"location_gid",value:loc},
+    {key:"area",value:area},
+    {key:"position",value:position},
+  ]});
+  const nodes = [
+    section("4","Lager","gid://shopify/Location/1","På lagret","2"),
+    section("3","Barnspel","gid://shopify/Location/1","I butiken","2"),
+    section("1","Nyheter","gid://shopify/Location/1","I butiken","1"),
+    section("2","Bord A","gid://shopify/Location/2",null,null),
+    section("5","Orelaterat","gid://shopify/Location/3","I butiken","1"),
+  ];
+  const list = parseSectionRegistry(nodes,stores);
+  assert.deepEqual(list.sveavagen.map(section => section.name),
+    ["Nyheter","Barnspel","Lager"]);
+  assert.deepEqual(list.kungsholmen.map(section => section.name),["Bord A"]);
+  assert.equal(list.kungsholmen[0].area,"I butiken");
+  assert.equal(list.kungsholmen[0].position,0);
+  assert.equal(list.sveavagen[0].id,"1");
 });
